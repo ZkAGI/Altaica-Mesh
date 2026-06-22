@@ -1,0 +1,29 @@
+# ── NEVER COMMIT: secrets ───────────────────────────────────────────────
+.altaica_mesh.json
+*.env
+.env
+*api_key*
+*secret*
+*.pem
+*.key
+
+# ── NEVER COMMIT: keys + model weights (derivatives of the base model) ───
+perm_keys.pt
+*_keys.pt
+perm_scrambled_hf/
+*_scrambled_hf/
+*_bundle.pt
+*.safetensors
+*.bin
+ml_tok/
+
+# ── runtime / logs / caches ─────────────────────────────────────────────
+__pycache__/
+*.pyc
+receipt_log.jsonl
+anchors.jsonl
+*.last_receipt.json
+.last_receipt.json
+node_dist/
+nodec_build/
+*.log

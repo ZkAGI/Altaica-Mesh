@@ -1,0 +1,19 @@
+# Core
+torch>=2.4
+transformers>=5.12        # DeepSeek-V3 (MLA + MoE) model classes + DynamicCache.crop
+safetensors>=0.4
+numpy
+
+# Serving
+vllm>=0.23                # single-node + colocated pipeline-parallel serving
+fastapi
+uvicorn[standard]
+pydantic
+requests
+
+# Verifiable receipts (post-quantum signatures, ML-DSA / FIPS-204).
+# Pick an ML-DSA / Dilithium implementation available on your platform, e.g. dilithium-py.
+# dilithium-py
+
+# Optional: PII scrubbing on the trusted side (privacy_layer.py)
+# presidio-analyzer

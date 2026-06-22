@@ -1,0 +1,32 @@
+Altaica Mesh
+Copyright (c) 2026 ZKAGI Ecosystem Association, Switzerland
+Licensed under the MIT License (see LICENSE).
+
+This project IMPLEMENTS and BUILDS ON the following prior work. We are grateful
+to these authors; this software does not include their code or any trained
+model weights.
+
+METHOD — Covariant obfuscation
+  "Towards Privacy-Preserving LLM Inference via Covariant Obfuscation"
+  Yu Lin, Qizhi Zhang, Wenqiang Ruan, Daode Zhang, Jue Hong, Ye Wu, Hanning Xia,
+  Yunlong Mao, Sheng Zhong (2026). arXiv:2603.01499  ("AloePri")
+  -> The covariant rotation P that this project applies to the weights is their
+     contribution. This is an independent implementation of the published method.
+
+DISTRIBUTION SUBSTRATE — inspiration
+  Leyten's "shard" distributed-inference engine. https://github.com/leyten/shard
+  -> The layer-sharding / verifiable-receipt approach informed the mesh design.
+     No shard code is included here; this is an independent implementation.
+
+THIRD-PARTY DEPENDENCIES (not redistributed; installed via pip at runtime)
+  - PyTorch                  (BSD-3-Clause)
+  - Hugging Face Transformers(Apache-2.0)   — DeepSeek-V3 / MLA+MoE model classes
+  - vLLM                     (Apache-2.0)   — single-node serving
+  - safetensors              (Apache-2.0)
+  - FastAPI / Uvicorn / Pydantic (MIT / BSD)
+  - A post-quantum signature library implementing ML-DSA / FIPS-204 (Dilithium)
+
+BASE MODELS (NOT included; bring your own, under their own license)
+  This software scrambles a model you supply. The reference architecture is the
+  DeepSeek-V3 family (e.g. moonshotai/Moonlight-16B-A3B-Instruct). You are
+  responsible for complying with the license of any model you download and use.
