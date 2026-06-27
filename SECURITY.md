@@ -22,13 +22,37 @@ Read this before assessing severity — many "issues" are actually documented pr
 P-framed activations (sharded), holds **no** keys/tokenizer/embedding/head, and cannot reconstruct
 your prompt. Keys (`Π`, `P`) are generated on, and never leave, the **trusted** device.
 
-**Its guarantee is computational, not information-theoretic.** Privacy rests on the secrecy of `Π`
-(and the hardness of inverting the obfuscation), **not** on the rotation `P` alone — a determined
-attacker with labeled examples can partially undo a fixed rotation, so `P` by itself is not the lock.
-Measured true-token recovery against a realistic no-keys adversary is ~0.033% (vs a 5% bar); treat
-this as an empirical bound, not a proof.
+**Its guarantee is computational, not information-theoretic — and CONDITIONAL on the deployed model
+not being a public checkpoint the operator can also download.** This is the load-bearing caveat:
+
+> A permutation/rotation **preserves each weight's value-multiset.** So an operator who downloads the
+> **same public base model** can sort-and-match the scrambled weights/embeddings against it and
+> **reconstruct the key `Π`/`P` with no keys, no labels, and no chosen-plaintext oracle** — a single-shot,
+> unsupervised attack. Measured on real weights: **~100% token recovery (73% even through 4-bit quant),
+> ~15 seconds.** See `redteam_keyrecovery.py`.
+
+The earlier "~0.033%" figure was measured against an adversary that did **not** cross-reference the
+public base model (`phase1_gate.py` Adversary A). It does **not** hold against an operator who does.
+**Privacy is therefore real only under one of:**
+1. **Secret weights** — deploy a private fine-tune/merge the operator does not have (no public reference
+   ⇒ no multiset match). Fast, single-node.
+2. **MPC `R_t` tier** — a per-request value mask with interactive non-linearities; information-theoretic
+   per request, independent of the key, holds even on the exact public model. Slower (the round-complexity
+   cost). This is the real cryptographic guarantee.
+3. **TEE-backed node** — confidential compute; permutation is then defense-in-depth.
+
+With a **public** base model on a single node and none of the above, this is **obfuscation** (raises the
+attacker's cost), not a confidentiality guarantee. Label it as such.
 
 **Out of scope / known limitations (not vulnerabilities):**
+- **Public-base key recovery (the big one).** A static permutation/rotation of a *public* checkpoint is
+  recoverable by value-multiset matching against that public model (see above / `redteam_keyrecovery.py`).
+  Mitigate with a secret model, the MPC `R_t` tier, or a TEE node — not with more permutation or higher
+  precision (higher precision makes the match *easier*).
+- **Static key → traffic analysis.** A single fixed `Π` reused across requests is a substitution cipher;
+  an operator aggregating traffic can apply frequency analysis. Per-request re-randomization / `R_t` closes this.
+- **Structure leakage.** Exact prompt/output length and repeated-token structure survive permutation.
+  Mitigate with length-bucketing, fixed batches, and jittered streaming.
 - **Trusted device compromise.** If the device holding `perm_keys.pt` is compromised, privacy is lost.
   Protect the keys; prefer ephemeral per-session keys (roadmap: TEE-anchored key ceremony).
 - **The base-model license / patents.** See `LEGAL.md`. Not a security matter.

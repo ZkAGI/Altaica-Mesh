@@ -67,7 +67,7 @@ You want to use a big, smart AI model. You have two normal choices, and both ask
 | | ☁️ Cloud API | 🏠 Ollama (local) | 🐯 **Altaica Mesh** |
 |---|:---:|:---:|:---:|
 | **Where it runs** | their server | *your* machine | someone else's GPU |
-| **Can the host read your prompt?** | 🔴 Yes | 🟢 N/A (it's you) | 🟢 **No — blind** |
+| **Can the host read your prompt?** | 🔴 Yes | 🟢 N/A (it's you) | 🟡 **Not in one request; with a *secret* model or the MPC tier, no — see [honesty section](#-the-blindness-honestly)** |
 | **Run models too big for your hardware?** | 🟢 Yes | 🔴 No | 🟢 **Yes** |
 | **Need your own expensive GPU?** | 🟢 No | 🔴 Yes | 🟢 **No** |
 | **Split one giant model across many GPUs?** | — | 🔴 No | 🟢 **Yes (sharded)** |
@@ -106,10 +106,27 @@ We measure three things separately and never blur them (honesty is the whole poi
 | Guarantee | In plain words | Measured |
 |---|---|---|
 | 🎯 **Exact** | Same answer as the original model. | Token-for-token identical (bf16); the MoE router even picks the same experts. |
-| 🙈 **Private** | A keyless GPU can't turn what it sees back into your words. | True-token recovery **≈ 0.033%** vs a 5% bar. |
+| 🙈 **Private** | A keyless GPU can't turn what it sees back into your words. | **Depends on the adversary — see the table below. Honest answer: obfuscation, conditional.** |
 | 🔏 **Verifiable** | Every answer is signed & checkable. | **ML-DSA-65** (FIPS-204) post-quantum receipt + SHA3 Merkle. |
 
-> 🐾 **Honest paw-print:** this is **computational** privacy (hard to reverse), not information-theoretic (impossible to reverse). The lock is the secret permutation `Π` staying on your device. We'd rather say that than oversell it.
+### What "private" actually means here (read this before you trust it)
+
+The privacy is a **secret permutation/rotation of the weights**. Its strength depends entirely on **what the adversary knows** — and we now test that explicitly:
+
+| Adversary | What they can do | Recovery |
+|---|---|---|
+| **Honest/keyless node, one request** | Sees permuted IDs only; no tokenizer, no key | ✅ ≈ chance |
+| **Node + the public base model** ⚠️ | Downloads the *same public model* and **multiset-matches** the scrambled weights/embeddings against it to **reconstruct the key** | 🔴 **~100% (≈15 s)** |
+
+> ⚠️ **The honest, load-bearing caveat we previously understated:** a permutation/rotation **preserves each weight's value-multiset**. So if the deployed model is a **public download** (e.g. stock `Moonlight`/`Gemma`), an operator who fetches that same public model can **sort-and-match to recover the key `Π`/`P` in seconds** — we measured **100%** token recovery (73% even through 4-bit quant) on real weights. The earlier "≈0.033%" figure was measured against a weaker adversary that did **not** cross-reference the public base; it does **not** hold against an operator who does.
+
+**Therefore the privacy guarantee is real only under one of these conditions:**
+
+1. 🔑 **Secret weights** — you deploy a *private* model (a fine-tune/merge the operator does **not** have). No public reference ⇒ no multiset match ⇒ key stays hard. *(Fast, single-server.)*
+2. 🧮 **MPC mask tier** — a per-request value mask `R_t` with interactive non-linearities. Information-theoretic per request, independent of the key, works even on the **exact public model**. *(Slower — the real cryptographic guarantee; see [`SECURITY.md`](SECURITY.md).)*
+3. 🛡️ **TEE-backed** — run the node inside confidential compute (TDX/SEV); permutation becomes defense-in-depth.
+
+> 🐾 **Honest paw-print:** with a **public** base model on a single node, this is **obfuscation** (raises cost, not a wall) — *not* the "can't read your data" guarantee. Use a **secret model** or the **MPC tier** for that. We'd rather tell you exactly where the lock is pickable than oversell it.
 
 ---
 
@@ -181,7 +198,8 @@ python mesh_serve.py        # → http://127.0.0.1:8099  (single / colocated / c
 ## 🐾 Honest notes
 
 - Privacy is **computational**, not "unbreakable." We never claim otherwise.
-- Serve at **bf16 or fp8** to keep the answer exact; aggressive low-bit quant breaks the scramble.
+- ⚠️ **A static permutation of a *public* model is recoverable** by an operator who downloads that same public model and multiset-matches the weights (we measured ~100%). For a real guarantee, deploy a **secret model** or use the **MPC `R_t` tier** — see [the honesty section](#-the-blindness-honestly) and [`SECURITY.md`](SECURITY.md). Do **not** rely on permutation-only privacy with a stock public checkpoint.
+- Serve at **bf16 or fp8** to keep the answer exact; aggressive low-bit quant breaks the scramble. *(Note: higher precision = exact, but also makes the multiset key-recovery attack above slightly **easier** — another reason to use a secret model or the mask tier, not precision, as your privacy lever.)*
 - The transform is **architecture-specific** (`m1_moonlight_mla_scramble.py` covers DeepSeek-V3 / MLA + MoE). Porting to another architecture = re-derive `P` so it still cancels (validate with `verify_shard3.py`).
 
 ---
