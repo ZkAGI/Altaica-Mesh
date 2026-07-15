@@ -1,5 +1,27 @@
 # Fortifying the obfuscation tier — red-teamed
 
+## ⚠️ Adversarial stress-test update (real weights, adaptive attacks) — `obfuscation_stresstest.py`
+Re-run on a **real trained weight** (MiniLM FFN, 1536×384) with a stronger attacker that adds **Sinkhorn
+normalization** (alternating row/col L2), which *cancels any positive per-channel diagonal scaling*:
+
+| defense | multiset | corr | **sinkhorn+ms** | **sinkhorn+corr** | verdict |
+|---|---|---|---|---|---|
+| P (permutation) | 100% | 100% | 100% | 100% | BROKEN |
+| **P·D+** (positive scaling) | 3% | 3% | **100%** | **100%** | **BROKEN — Sinkhorn undoes it** |
+| **P·D±** (SIGNED scaling) | 0.5% | 0.5% | 6% | 12% | leaks |
+| P·D±+Q (+requantize) | 0.8% | 0.5% | 3% | 4% | residual |
+| P·D±+Q+δ (+tiny delta) | 0.6% | 0.5% | 1.6% | 2.1% | residual |
+
+**Findings that change the recipe:**
+1. **Positive diagonal scaling is NOT safe** — Sinkhorn normalization recovers the permutation 100%. A naive
+   red-team (multiset/correlation only) misses this and wrongly reports P·D as holding.
+2. **Use SIGNED diagonal scaling** — the per-channel sign flips are an ambiguity Sinkhorn can't normalize away;
+   they drop recovery from 100% to ~10%. Signed folding is exact for linear layers; take care through SiLU/RMSNorm.
+3. **+ requantize + a small fine-tune delta** push recovery to low single digits, but a **measurable residual
+   remains** (~2–4%). Behavior cost: scaling is exact/free; requantize costs ≈ the 4-bit budget you already pay.
+4. **Therefore obfuscation is a cost-raising layer, not a guarantee.** The guarantee must come from the MPC
+   **share** layer (uniform activations, information-theoretic) — empirically reconfirmed below.
+
 ## The break we're fixing
 Static **permutation** obfuscation is broken. The deployed weights are the public checkpoint's *exact values,
 just rearranged*, so an attacker matches each deployed row's **multiset** of values to a public row and
@@ -15,10 +37,12 @@ Reproduced here (`obfuscation_redteam.py`, N=256 rows, chance = 0.4%):
 ## The fix — make the *values* different, cheaply, offline (behavior unchanged)
 Ranked by simplicity; the composition is close to free and entirely one-time/offline.
 
-1. **Diagonal scaling `P·D` (best lever).** Permute *and* multiply each channel by a random nonzero scalar,
-   with the inverse folded into the adjacent layer — the standard network-reparameterization symmetry
-   (`y = (W·D⁻¹)(D·x)`), handled with care at the RMSNorm/SiLU nonlinearity boundaries. Every value in the
-   tensor changes → the multiset matches nothing. **Zero runtime cost.** Red-team: exact-multiset 100% → 0%.
+1. **SIGNED diagonal scaling `P·D±` (best lever).** Permute *and* multiply each channel by a random nonzero
+   scalar **including sign flips**, with the inverse folded into the adjacent layer — the standard
+   network-reparameterization symmetry (`y = (W·D⁻¹)(D·x)`), handled with care at the RMSNorm/SiLU boundaries.
+   Every value changes → multiset matches nothing, and (unlike *positive* scaling) the sign flips survive a
+   Sinkhorn attacker. **Zero runtime cost, exact.** (Positive-only scaling is broken by Sinkhorn — see the
+   stress-test above.)
 2. **Requantize after transforming.** Scale, then quantize to int4 with *fresh per-row scales*. Quantization
    noise on top of random scaling destroys exact-value matching and degrades the correlation residual (the
    attacker's library is quantized with *different* scales). Nearly free — you were quantizing anyway.
@@ -48,7 +72,7 @@ wrong layer to carry the guarantee:
   information-theoretic, KS≈0. This is what survives an adversary with unlimited compute. Sell the guarantee
   here.
 - **Custodian tier** (strongest for regulated data): the record never leaves the device at all; the powerful
-  model only asks questions (the custodian pattern — kept with the product).
+  model only asks questions (`docs/SPLIT_DEPTH_CUSTODIAN.md`).
 
 ## Serving-engine note (for the full-scale red-team)
 Ollama (current Expert host) doesn't expose activations, so the scaled red-team above runs on realistic weight

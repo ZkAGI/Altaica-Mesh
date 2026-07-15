@@ -15,7 +15,11 @@ Defenses:
   3) P·D+Q    — the above, then requantize each row to int4 with a FRESH per-row scale (quant noise)
 Metric = fraction of rows the attacker correctly re-identifies (1.0 = fully de-obfuscated; ~1/N = chance).
 
-Run: python scripts/obfuscation_redteam.py
+Run: python obfuscation_redteam.py
+
+NOTE: this uses NAIVE attacks (multiset/correlation) — good enough to show permutation-only is broken.
+A stronger adversary (Sinkhorn normalization) breaks POSITIVE diagonal scaling too; see obfuscation_stresstest.py
+for the adaptive red-team on real weights and the SIGNED-scaling fix.
 """
 import numpy as np
 
