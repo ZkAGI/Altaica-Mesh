@@ -1,0 +1,59 @@
+# Fortifying the obfuscation tier — red-teamed
+
+## The break we're fixing
+Static **permutation** obfuscation is broken. The deployed weights are the public checkpoint's *exact values,
+just rearranged*, so an attacker matches each deployed row's **multiset** of values to a public row and
+recovers the permutation in seconds. Measured earlier on real gemma4-31b: ~100% token + key recovery.
+Reproduced here (`obfuscation_redteam.py`, N=256 rows, chance = 0.4%):
+
+| defense | exact-multiset attack | correlation attack | verdict |
+|---|---|---|---|
+| **P** (permutation only) | **100.0%** | **100.0%** | BROKEN |
+| **P·D** (permute + diagonal scaling) | 0.0% | 1.2% | holds (~chance) |
+| **P·D + Q** (+ requantize, fresh scales) | 1.6% | 0.4% | holds (~chance) |
+
+## The fix — make the *values* different, cheaply, offline (behavior unchanged)
+Ranked by simplicity; the composition is close to free and entirely one-time/offline.
+
+1. **Diagonal scaling `P·D` (best lever).** Permute *and* multiply each channel by a random nonzero scalar,
+   with the inverse folded into the adjacent layer — the standard network-reparameterization symmetry
+   (`y = (W·D⁻¹)(D·x)`), handled with care at the RMSNorm/SiLU nonlinearity boundaries. Every value in the
+   tensor changes → the multiset matches nothing. **Zero runtime cost.** Red-team: exact-multiset 100% → 0%.
+2. **Requantize after transforming.** Scale, then quantize to int4 with *fresh per-row scales*. Quantization
+   noise on top of random scaling destroys exact-value matching and degrades the correlation residual (the
+   attacker's library is quantized with *different* scales). Nearly free — you were quantizing anyway.
+3. **Tiny random delta (sledgehammer).** Bake in a low-rank delta, or fine-tune a few hundred steps on generic
+   data, *before* obfuscating. Now the deployed weights are **not any public checkpoint** — multiset matching
+   has nothing to match against. Cost: a few GPU-hours, once. (Model-soup merging is a fancier version; a
+   LoRA-style delta is simpler and gives the same property.)
+4. **Keep the first and last layers off the mesh.** The client / trusted coordinator holds the embeddings and
+   the output head. Even a node that fully inverts its middle shard sees activations with **no direct token
+   mapping** at either end. Cheap; stacks with everything above.
+
+**Recommended composition: `D-scale → requantize → per-tensor P`.** Purely offline, ~free, and it turns the
+attack from "seconds via multiset lookup" into "recover per-channel scale factors under quantization noise" —
+a much harder statistical problem. Add (3) whenever a model matters enough, and it stops being a matching
+problem at all.
+
+## The honest framing (put this in the sales/legal docs verbatim)
+None of the above is *provable* security — it raises the inversion **cost**. That's fine, because it's the
+wrong layer to carry the guarantee:
+
+> **Obfuscation makes the *weights* expensive to fingerprint. Shares make the *activations* meaningless to
+> observe. The guarantee lives in the second one.**
+
+- **Obfuscation tier** (fast, cheap): `P·D → requant → P` + off-mesh ends. Bounds *weight* de-anonymization
+  cost. Sell it as "computationally private, fast" — never as information-theoretic.
+- **Share / MPC tier** (the guarantee): additive shares make each node's view of *activations* uniform →
+  information-theoretic, KS≈0. This is what survives an adversary with unlimited compute. Sell the guarantee
+  here.
+- **Custodian tier** (strongest for regulated data): the record never leaves the device at all; the powerful
+  model only asks questions (the custodian pattern — kept with the product).
+
+## Serving-engine note (for the full-scale red-team)
+Ollama (current Expert host) doesn't expose activations, so the scaled red-team above runs on realistic weight
+tensors. To red-team the **real 31B** end-to-end — apply `P·D→Q` to the actual checkpoint, serve with an
+activation-accessible engine (vLLM / SGLang / llama.cpp with hooks), and measure both weight-fingerprint
+recovery *and* activation-inversion — run it on a box with headroom (the current GPU is VRAM-pressured at
+31/32 GB; free the other ~16 GB first). The attack + metric code generalizes directly from
+`obfuscation_redteam.py`.
