@@ -22,11 +22,27 @@ normalization** (alternating row/col L2), which *cancels any positive per-channe
 4. **Therefore obfuscation is a cost-raising layer, not a guarantee.** The guarantee must come from the MPC
    **share** layer (uniform activations, information-theoretic) — empirically reconfirmed below.
 
+
+## ⛔ The fundamental limit (why recovery can't reach 0 with obfuscation) — `obfuscation_fortify_v2.py`
+The attacker HAS the public checkpoint, so any behavior-exact transform of it is a **solvable inverse**:
+- permutation → value-matching (multiset/Sinkhorn),
+- **rotation / scaling → least-squares** (a random orthogonal `W·Q` is inverted to **3.9e-15** — proven).
+
+So no amount of clever *relabelling* reaches recovery 0. Only a genuine **weight change** does, and it isn't
+cheap: a random delta needs ~**40% of ‖W‖** to kill the match (2–10% barely dents it) — essentially a different
+model. A real **self-distillation** fine-tune is more efficient and restores behavior by construction, but its
+recovery-vs-steps curve needs a training run to quantify.
+
+**Conclusion:** obfuscation is cheap **defense-in-depth** that raises weight-fingerprinting cost; it is *not*
+the path to recovery-0. The **guarantee** — provably recovery 0, information-theoretic, for any attacker
+compute — is the **share layer**. Best deployment: **self-distilled weights** (so there's no public checkpoint
+to match) **+ the share layer** for the guarantee.
+
 ## The break we're fixing
 Static **permutation** obfuscation is broken. The deployed weights are the public checkpoint's *exact values,
 just rearranged*, so an attacker matches each deployed row's **multiset** of values to a public row and
 recovers the permutation in seconds. Measured earlier on real gemma4-31b: ~100% token + key recovery.
-Reproduced here (`obfuscation_redteam.py`, N=256 rows, chance = 0.4%):
+Reproduced here (`scripts/obfuscation_redteam.py`, N=256 rows, chance = 0.4%):
 
 | defense | exact-multiset attack | correlation attack | verdict |
 |---|---|---|---|
@@ -80,4 +96,4 @@ tensors. To red-team the **real 31B** end-to-end — apply `P·D→Q` to the act
 activation-accessible engine (vLLM / SGLang / llama.cpp with hooks), and measure both weight-fingerprint
 recovery *and* activation-inversion — run it on a box with headroom (the current GPU is VRAM-pressured at
 31/32 GB; free the other ~16 GB first). The attack + metric code generalizes directly from
-`obfuscation_redteam.py`.
+`scripts/obfuscation_redteam.py`.
